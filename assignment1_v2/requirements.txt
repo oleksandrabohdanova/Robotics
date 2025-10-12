@@ -1,0 +1,7 @@
+pyglet
+pygame
+opencv-python>=4.7
+box2d-py
+
+tqdm
+gymnasium
