@@ -17,14 +17,25 @@ def forward_kinematics(arm: RoboticArm, angles=None):
     # UA: Реалізуйте пряму кінематику тут.
     # EN: Implement forward kinematics logic here.
     ############################################################
-    # Дано:
+
     base_position = np.array(arm.joints[0].position)
     link_lengths = np.array(arm.link_lengths)
     if angles is None:
         angles = np.array(arm.get_angles())
-    # Знайти:
-    end_effector_position = None
-
+    
+    x = base_position[0]
+    y = base_position[1]
+    
+    cumulative_angle = 0
+    
+    for i in range(len(link_lengths)):
+        cumulative_angle += angles[i]
+        
+        x += link_lengths[i] * np.cos(cumulative_angle)
+        y += link_lengths[i] * np.sin(cumulative_angle)
+    
+    end_effector_position = np.array([x, y])
+    
     ############################################################
     ############################################################
 
@@ -70,10 +81,10 @@ if __name__ == "__main__":
     a = 0
     try:
         while running:
-            # Check the event queue
+            
             for event in pygame.event.get():
                 if event.type == QUIT or (event.type == KEYDOWN and event.key == K_ESCAPE):
-                    # The user closed the window or pressed escape
+                   
                     running = False
 
             ms_start = time.perf_counter_ns() / 1000
@@ -103,10 +114,9 @@ if __name__ == "__main__":
             else:
                 running = False
 
-            # Make Box2D simulate the physics of our world for one step.
+
             ctx.world.Step(TIME_STEP, 10, 10)
 
-            # Flip the screen and try to keep at the target FPS
             pygame.display.flip()
             ctx.clock.tick(TARGET_FPS)
     except KeyboardInterrupt:

@@ -12,7 +12,6 @@ import robo_algo.core as core
 from robo_algo.core import Color, ColorGreen
 
 
-# Increase for debugging!
 MAX_SPEED = np.deg2rad(1.5)
 
 ############################## YOUR CODE GOES HERE ####################################
@@ -21,14 +20,72 @@ MAX_SPEED = np.deg2rad(1.5)
 # EN: Your code for IK and drawing goes here.                                         #
 
 def forward_kinematics(arm: RoboticArm, angles=None):
-    return np.array([3., 3.])
+    base_position = np.array(arm.joints[0].position)
+    link_lengths = np.array(arm.link_lengths)
+    if angles is None:
+        angles = np.array(arm.get_angles())
+
+    cumulative_angles = np.cumsum(angles)
+    link_vectors = np.stack(
+        [
+            link_lengths * np.cos(cumulative_angles),
+            link_lengths * np.sin(cumulative_angles),
+        ],
+        axis=1,
+    )
+    end_effector_position = base_position + np.sum(link_vectors, axis=0)
+    return end_effector_position[:2]
 
 def jacobian(link_lengths, link_angles):
-    jacobian_matrix = np.zeros((2, len(link_angles)))
+    n = len(link_angles)
+    jacobian_matrix = np.zeros((2, n))
+    cumulative_angles = np.cumsum(link_angles)
+    for i in range(n):
+        for k in range(i, n):
+            jacobian_matrix[0, i] += -link_lengths[k] * np.sin(cumulative_angles[k])
+            jacobian_matrix[1, i] += link_lengths[k] * np.cos(cumulative_angles[k])
     return jacobian_matrix
 
-def inverse_kinematics(target_position, arm):
-    angles = arm.get_angles()
+def inverse_kinematics(target_position, arm, max_iterations=100, tolerance=0.01):
+    
+    # Get current angles
+    angles = arm.get_angles().copy()
+    link_lengths = np.array(arm.link_lengths)
+    
+    # Check if target is reachable
+    base_pos = arm.joints[0].position
+    distance_to_target = np.linalg.norm(target_position - base_pos)
+    max_reach = np.sum(link_lengths)
+    min_reach = 0.5  # Minimum distance from base
+    
+    # If unreachable - return current angles
+    if distance_to_target > max_reach * 0.95 or distance_to_target < min_reach:
+        return angles
+    
+    # Adaptive damping - increase near singularities
+    base_damping = 0.01
+    
+    for i in range(max_iterations):
+        # Current position
+        current_position = forward_kinematics(arm, angles)
+        
+        error = target_position - current_position
+        error_norm = np.linalg.norm(error)
+        
+        # Check if close enough
+        if error_norm < tolerance:
+            break
+        
+        J = jacobian(link_lengths, angles)
+        
+        damping = base_damping + 0.1 * min(1.0, error_norm / max_reach)
+      
+        J_pseudo_inverse = np.linalg.inv((J.T.dot(J)) + damping * np.eye(J.shape[1])).dot(J.T)
+        
+        # Update angles with smaller steps
+        delta_angles = 0.5 * np.dot(J_pseudo_inverse, error)
+        angles += delta_angles
+    
     return angles
 
 #######################################################################################
@@ -51,8 +108,8 @@ if __name__ == "__main__":
     controller = ArmController(arm, max_velocity=MAX_SPEED)
     arm.start_drawing()
 
-    pygame.font.init() # you have to call this at the start, 
-                   # if you want to use this module.
+    pygame.font.init() 
+                  
     my_font = pygame.font.SysFont(pygame.font.get_default_font(), 30)
 
     running = True
@@ -63,7 +120,7 @@ if __name__ == "__main__":
             # Check the event queue
             for event in pygame.event.get():
                 if event.type == QUIT or (event.type == KEYDOWN and event.key == K_ESCAPE):
-                    # The user closed the window or pressed escape
+                    
                     running = False
                 elif event.type == pygame.MOUSEMOTION:
                     target_point = core.from_pix(np.array(event.dict['pos']))
@@ -87,14 +144,20 @@ if __name__ == "__main__":
             #######################################################################################
             # controller.move_to_angles([your predicted angles])
 
-            pass
+            # Calculate IK for current target position
+            target_angles = inverse_kinematics(target_point, arm, max_iterations=100, tolerance=0.01)
+            
+            if controller.is_idle():
+                controller.move_to_angles(target_angles)
+            else:
+                controller.step()
 
             #######################################################################################
             #######################################################################################
 
-            # Make Box2D simulate the physics of our world for one step.
+            # Make Box2D simulate the physics
             ctx.world.Step(TIME_STEP, 10, 10)
-            # Flip the screen and try to keep at the target FPS
+          
             pygame.display.flip()
             ctx.clock.tick(TARGET_FPS)
     except KeyboardInterrupt:

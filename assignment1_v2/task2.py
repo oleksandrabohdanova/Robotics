@@ -12,8 +12,6 @@ from robo_algo.constants import *
 import robo_algo.core as core
 from robo_algo.core import Color
 
-
-# Increase for debugging!
 MAX_SPEED = np.deg2rad(1.0)
 
 ############################## YOUR CODE GOES HERE ####################################
@@ -22,14 +20,66 @@ MAX_SPEED = np.deg2rad(1.0)
 # EN: Your code for IK and drawing goes here.                                         #
 
 def forward_kinematics(arm: RoboticArm, angles=None):
-    return np.array([3., 3.])
+    base_position = np.array(arm.joints[0].position)
+    link_lengths = np.array(arm.link_lengths)
+    if angles is None:
+        angles = np.array(arm.get_angles())
+
+    cumulative_angles = np.cumsum(angles)
+    link_vectors = np.stack(
+        [
+            link_lengths * np.cos(cumulative_angles),
+            link_lengths * np.sin(cumulative_angles),
+        ],
+        axis=1,
+    )
+    end_effector_position = base_position + np.sum(link_vectors, axis=0)
+    return end_effector_position[:2]
 
 def jacobian(link_lengths, link_angles):
-    jacobian_matrix = np.zeros((2, len(link_angles)))
+    n = len(link_angles)
+    jacobian_matrix = np.zeros((2, n))
+    cumulative_angles = np.cumsum(link_angles)
+    for i in range(n):
+        for k in range(i, n):
+            jacobian_matrix[0, i] += -link_lengths[k] * np.sin(cumulative_angles[k])
+            jacobian_matrix[1, i] += link_lengths[k] * np.cos(cumulative_angles[k])
     return jacobian_matrix
 
-def inverse_kinematics(target_position, arm):
-    angles = arm.get_angles()
+def inverse_kinematics(target_position, arm, max_iterations=200, tolerance=0.001):
+   
+    angles = arm.get_angles().copy()
+    link_lengths = np.array(arm.link_lengths)
+    k_base = 0.02
+    limit_threshold = 2.5
+
+    for iteration in range(max_iterations):
+        current_position = forward_kinematics(arm, angles)
+        error = target_position - current_position
+        error_magnitude = np.linalg.norm(error)
+
+        if error_magnitude < tolerance:
+            break
+
+        J = jacobian(link_lengths, angles)
+        J_pinv = np.linalg.pinv(J)
+        delta_theta_primary = J_pinv @ error
+        delta_theta_secondary = np.zeros(len(angles))
+        
+        joints_near_limits = np.abs(angles) > limit_threshold
+        if np.any(joints_near_limits) and error_magnitude < 0.5:
+            k_adaptive = k_base * min(1.0, error_magnitude / 0.1)
+            I = np.eye(len(angles))
+            N = I - J_pinv @ J
+            limit_gradient = np.zeros(len(angles))
+            for i in range(len(angles)):
+                if np.abs(angles[i]) > limit_threshold:
+                    limit_gradient[i] = -np.sign(angles[i]) * (np.abs(angles[i]) - limit_threshold)
+            delta_theta_secondary = k_adaptive * N @ limit_gradient
+        
+        delta_angles = delta_theta_primary + delta_theta_secondary
+        angles = angles + delta_angles
+
     return angles
 
 #######################################################################################
@@ -49,7 +99,6 @@ if __name__ == "__main__":
         joint_color=Color(200, 200, 200, 255),
     )
     controller = ArmController(arm, max_velocity=MAX_SPEED)
-    arm.start_drawing()
 
     ### <UA>
     ### drawing1 це список масивів точок. Кожен масив описує фігуру для малювання.
@@ -64,12 +113,13 @@ if __name__ == "__main__":
     running = True
     i_shape = 0
     i_point = 0
+    moving_to_start = False
     try:
         while running:
             # Check the event queue
             for event in pygame.event.get():
                 if event.type == QUIT or (event.type == KEYDOWN and event.key == K_ESCAPE):
-                    # The user closed the window or pressed escape
+                
                     running = False
 
             ctx.screen.fill((0, 0, 0, 0))
@@ -81,16 +131,44 @@ if __name__ == "__main__":
             # EN: Your code for IK and drawing goes here.                                         #
             #######################################################################################
             #######################################################################################
-            # Hint: see arm_controller interface, use `controller`
-            # controller.move_to_angles([your predicted angles])
+           
             drawing = drawing2
 
+            if i_shape < len(drawing):
+                current_shape = drawing[i_shape]
+                
+                if controller.is_idle():
+                    if i_point < len(current_shape):
+                        # Starting new shape - move without drawing
+                        if i_point == 0:
+                            moving_to_start = True
+                        
+                        # After reaching first point - start drawing
+                        if i_point == 1 and moving_to_start:
+                            arm.start_drawing()
+                            moving_to_start = False
+                        
+                        target_point = current_shape[i_point]
+                        target_angles = inverse_kinematics(target_point, arm)
+                        controller.move_to_angles(target_angles)
+                        i_point += 1
+                    else:
+                        # Finished shape - stop drawing before next
+                        arm.stop_drawing()
+                        i_point = 0
+                        i_shape += 1
+                else:
+                    controller.step()
+                    # Only draw when not moving to start of new shape
+                    if not moving_to_start:
+                        arm.draw()
+
             #######################################################################################
             #######################################################################################
 
-            # Make Box2D simulate the physics of our world for one step.
+            # Make Box2D simulate the physics 
             ctx.world.Step(TIME_STEP, 10, 10)
-            # Flip the screen and try to keep at the target FPS
+            
             pygame.display.flip()
             ctx.clock.tick(TARGET_FPS)
     except KeyboardInterrupt:
