@@ -201,9 +201,17 @@ def rollout(f, C, Cf, x0, us):
     ###############################################
     # Compute xs[1:] and cost
     ###############################################
-    # YOUR CODE HERE
-    for n in range(us.shape[0]):
-        pass
+    num_timesteps = us.shape[0]
+    for step in range(num_timesteps):
+        current_state = xs[step]
+        current_control = us[step]
+        next_state = f(current_state, current_control)
+        xs[step + 1] = next_state
+        running_cost = C(current_state, current_control)
+        cost += running_cost
+    final_state = xs[-1]
+    terminal_cost = Cf(final_state)
+    cost += terminal_cost
     ###############################################
     return xs, cost
 
@@ -227,9 +235,18 @@ def forward_pass(f, C, Cf, xs, us, ks, Ks, alpha):
     # Update us_new, compute xs_new and const_new here
     # Do not forget to add final cost
     ###############################################
-    # YOUR CODE HERE
-    for n in range(us.shape[0]):
-        pass
+    horizon = us.shape[0]
+    for step in range(horizon):
+        x_current = xs_new[step]
+        x_nominal = xs[step]
+        u_nominal = us[step]
+        delta_x = x_current - x_nominal
+        control_feedforward = ks[step]
+        control_feedback = Ks[step] @ delta_x
+        us_new[step] = u_nominal + alpha * control_feedforward + control_feedback
+        xs_new[step + 1] = f(x_current, us_new[step])
+        cost_new += C(x_current, us_new[step])
+    cost_new += Cf(xs_new[-1])
     ###############################################
 
     return xs_new, us_new, cost_new
@@ -274,8 +291,11 @@ def backward_pass(
         ###############################################
         # Compute Q_x, Q_u, Q_xx, Q_ux, Q_uu
         ###############################################
-        # YOUR CODE HERE
-        Q_x, Q_u, Q_xx, Q_ux, Q_uu = None, None, None, None, None
+        Q_x = l_x + f_x.T @ V_x
+        Q_u = l_u + f_u.T @ V_x
+        Q_xx = l_xx + f_x.T @ V_xx @ f_x
+        Q_ux = l_ux + f_u.T @ V_xx @ f_x
+        Q_uu = l_uu + f_u.T @ V_xx @ f_u
         ###############################################
 
         # Compute gains with regularization. I provide the implementation
@@ -292,8 +312,8 @@ def backward_pass(
         ###############################################
         # Compute V_x, V_xx
         ###############################################
-        # YOUR CODE HERE
-        V_x, V_xx = None, None
+        V_x = Q_x + K.T @ Q_u + Q_ux.T @ k + K.T @ Q_uu @ k
+        V_xx = Q_xx + K.T @ Q_ux + Q_ux.T @ K + K.T @ Q_uu @ K
         ###############################################
 
         # expected cost reduction
@@ -327,9 +347,8 @@ class iLQRPlayer(Player):
         ###############################################
         # Implement self.use_mpc = True functionality.
         ###############################################
-        # YOUR CODE HERE
         if self.use_mpc:
-            pass
+            update_plan = True
         ###############################################
 
         if self.target_counter != self.prev_target_counter:
